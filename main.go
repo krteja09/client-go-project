@@ -6,8 +6,13 @@ import (
 	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/informers"
+	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
+	"time"
 )
 
 func main() {
@@ -86,4 +91,67 @@ func main() {
 		log.WithError(err).Error("Error while deleting pod: %v in the namespace: %v ", newPod.Name, namespace)
 	}
 
+	factory := informers.NewSharedInformerFactory(clientset, time.Hour*24)
+	controller := NewPodLoggingController(factory)
+	stop := make(chan struct{})
+	defer close(stop)
+	err = controller.Run(stop)
+	if err != nil {
+		klog.Fatal(err)
+	}
+	select {}
+}
+
+type PodLoggingController struct {
+	informerFactory informers.SharedInformerFactory
+	podInformer     coreinformers.PodInformer
+}
+
+func (c *PodLoggingController) Run(stopCh chan struct{}) error {
+	// Starts all the shared informers that have been created by the factory so
+	// far.
+	c.informerFactory.Start(stopCh)
+	// wait for the initial synchronization of the local cache.
+	if !cache.WaitForCacheSync(stopCh, c.podInformer.Informer().HasSynced) {
+		return fmt.Errorf("failed to sync")
+	}
+	return nil
+}
+
+func (c *PodLoggingController) podAdd(obj interface{}) {
+	pod := obj.(*corev1.Pod)
+	log.Infof("POD CREATED: %s/%s", pod.Namespace, pod.Name)
+}
+
+func (c *PodLoggingController) podUpdate(old, new interface{}) {
+	oldPod := old.(*corev1.Pod)
+	newPod := new.(*corev1.Pod)
+	log.Infof("POD UPDATED. %s/%s %s", oldPod.Namespace, oldPod.Name, newPod.Status.Phase)
+}
+
+func (c *PodLoggingController) podDelete(obj interface{}) {
+	pod := obj.(*corev1.Pod)
+	log.Infof("POD DELETED: %s/%s", pod.Namespace, pod.Name)
+}
+
+// NewPodLoggingController creates a PodLoggingController
+func NewPodLoggingController(informerFactory informers.SharedInformerFactory) *PodLoggingController {
+	podInformer := informerFactory.Core().V1().Pods()
+
+	c := &PodLoggingController{
+		informerFactory: informerFactory,
+		podInformer:     podInformer,
+	}
+	podInformer.Informer().AddEventHandler(
+		// Your custom resource event handlers.
+		cache.ResourceEventHandlerFuncs{
+			// Called on creation
+			AddFunc: c.podAdd,
+			// Called on resource update and every resyncPeriod on existing resources.
+			UpdateFunc: c.podUpdate,
+			// Called on resource deletion.
+			DeleteFunc: c.podDelete,
+		},
+	)
+	return c
 }
