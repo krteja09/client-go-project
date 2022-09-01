@@ -11,7 +11,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog/v2"
 	"time"
 )
 
@@ -91,13 +90,13 @@ func main() {
 		log.WithError(err).Error("Error while deleting pod: %v in the namespace: %v ", newPod.Name, namespace)
 	}
 
-	factory := informers.NewSharedInformerFactory(clientset, time.Hour*24)
+	factory := informers.NewSharedInformerFactory(clientset, time.Hour*12)
 	controller := NewPodLoggingController(factory)
 	stop := make(chan struct{})
 	defer close(stop)
 	err = controller.Run(stop)
 	if err != nil {
-		klog.Fatal(err)
+		log.Fatal(err)
 	}
 	select {}
 }
@@ -108,8 +107,6 @@ type PodLoggingController struct {
 }
 
 func (c *PodLoggingController) Run(stopCh chan struct{}) error {
-	// Starts all the shared informers that have been created by the factory so
-	// far.
 	c.informerFactory.Start(stopCh)
 	// wait for the initial synchronization of the local cache.
 	if !cache.WaitForCacheSync(stopCh, c.podInformer.Informer().HasSynced) {
