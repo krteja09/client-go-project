@@ -96,7 +96,7 @@ func main() {
 	defer close(stop)
 	err = controller.Run(stop)
 	if err != nil {
-		log.Fatal(err)
+		log.WithError(err).Error("Error while running the controller")
 	}
 	select {}
 }
